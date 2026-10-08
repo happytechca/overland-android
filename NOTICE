@@ -1,0 +1,10 @@
+Overland for Android
+Copyright 2026 happytechca
+
+This app is a from-scratch Kotlin remake of the deprecated Overland for Android
+(https://github.com/OpenHumans/Overland_android, Apache License 2.0,
+Copyright 2020 Nicolas Eberlé). No source code was carried over; the launcher
+icon is redrawn after that project's icon.
+
+It sends data in the format of Overland for iOS by Aaron Parecki
+(https://github.com/aaronpk/Overland-iOS, Apache License 2.0).

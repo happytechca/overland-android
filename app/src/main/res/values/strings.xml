@@ -1,0 +1,35 @@
+<resources>
+    <string name="app_name">Overland</string>
+    <string name="channel_idle">Tracking (waiting for a trip)</string>
+    <string name="channel_trip">Trip in progress</string>
+    <string name="idle_title">Waiting for a trip</string>
+    <string name="idle_text">Last upload %1$s · %2$s</string>
+    <string name="idle_text_initial">Tracking is on</string>
+    <string name="trip_in_progress">Trip in progress</string>
+    <string name="trip_text">%1$s km · started at %2$s</string>
+
+    <string name="tracking_on">Tracking is ON</string>
+    <string name="tracking_off">Tracking is OFF</string>
+    <string name="start_tracking">Start tracking</string>
+    <string name="stop_tracking">Stop tracking</string>
+    <string name="upload_now">Send now / test connection</string>
+    <string name="uploading">Sending…</string>
+
+    <string name="server">Server</string>
+    <string name="url">Receiver endpoint URL</string>
+    <string name="token">Access token (sent as Bearer)</string>
+    <string name="device_id">Device ID</string>
+    <string name="upload_interval">Upload interval (seconds)</string>
+    <string name="save">Save settings</string>
+    <string name="saved">Saved</string>
+
+    <string name="checks">Permissions &amp; battery</string>
+    <string name="open_app_settings">Open app settings</string>
+    <string name="battery_unrestricted">Don\'t optimize battery for this app</string>
+
+    <string name="location_required">Location permission is required to track.</string>
+    <string name="background_title">Allow location all the time</string>
+    <string name="background_message">So tracking can resume on its own after a reboot or if Android restarts the app, choose \"Allow all the time\" on the next screen.</string>
+    <string name="continue_">Continue</string>
+    <string name="skip">Skip</string>
+</resources>
