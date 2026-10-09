@@ -28,8 +28,12 @@ paid dependencies and targets current Android versions (Android 8.0 and newer).
 - Offline queue: points are stored on the phone and uploaded in batches; nothing is lost without
   a connection. Nothing is tried while offline, failed uploads are retried after 1, 2, 4, 8 then every
   15 minutes, and a connection coming back retries right away.
-- "Trip in progress" notification with a live timer and distance while you're driving; a minimized,
-  silent notification the rest of the time.
+- The notification icon shows what tracking is doing, readable at a glance in the status bar or on the
+  always-on display: a car while driving (or as soon as the Bluetooth trigger device connects), a parking
+  sign while still, the pin while moving, a cloud with a slash when points haven't uploaded for 15 minutes,
+  a struck-through pin when location is off. While driving it shows "Trip in progress" with a live timer
+  and distance. In a quiet zone it shows a house and stays minimized, without a status bar icon on phones
+  that allow it. Silent throughout; can be turned off in Settings.
 - Diagnostics screen that checks permissions, battery optimization and manufacturer limits, with a
   button to fix each problem.
 
@@ -72,7 +76,7 @@ Content-Type: application/json
 - **Test connection** in Settings (or **Send now** on the main screen) with an empty queue sends
   `{"locations": []}`, handy for checking the URL and token.
 
-The trip notification is computed on the phone and is not sent to the server; the server gets the raw
+The trip shown in the notification is computed on the phone and is not sent to the server; the server gets the raw
 points and can build trips however it likes.
 
 ## Install

@@ -39,7 +39,7 @@ class Settings(context: Context) {
         get() = prefs.getBoolean("start_on_boot", true)
         set(v) = prefs.edit { putBoolean("start_on_boot", v) }
 
-    /** Show "Trip in progress" while on a trip; when off the notification stays minimized. */
+    /** Show the status icon (in the car, parked, tracking, problem); when off the notification stays minimized. */
     var tripNotification: Boolean
         get() = prefs.getBoolean(KEY_TRIP_NOTIFICATION, true)
         set(v) = prefs.edit { putBoolean(KEY_TRIP_NOTIFICATION, v) }

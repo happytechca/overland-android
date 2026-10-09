@@ -1,0 +1,7 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp" android:height="24dp"
+    android:viewportWidth="24" android:viewportHeight="24">
+    <!-- Parking sign: rounded square with a P cut out; notification icon while still -->
+    <path android:fillColor="#FFFFFFFF" android:fillType="evenOdd"
+        android:pathData="M6,3 H18 Q21,3 21,6 V18 Q21,21 18,21 H6 Q3,21 3,18 V6 Q3,3 6,3 Z M8.25,7 H12.25 A3.5,3.5 0 0 1 12.25,14 H10.65 V17 H8.25 Z M10.65,9.1 H12.25 A1.4,1.4 0 0 1 12.25,11.9 H10.65 Z" />
+</vector>

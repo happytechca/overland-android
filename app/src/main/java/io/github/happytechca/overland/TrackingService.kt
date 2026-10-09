@@ -14,6 +14,7 @@ import android.content.SharedPreferences
 import android.content.pm.PackageManager
 import android.content.pm.ServiceInfo
 import android.location.Location
+import android.location.LocationManager
 import android.net.ConnectivityManager
 import android.net.Network
 import android.net.NetworkCapabilities
@@ -24,9 +25,11 @@ import android.os.IBinder
 import android.os.Looper
 import android.text.format.DateFormat
 import android.util.Log
+import androidx.annotation.DrawableRes
 import androidx.core.app.NotificationCompat
 import androidx.core.app.ServiceCompat
 import androidx.core.content.ContextCompat
+import androidx.core.location.LocationManagerCompat
 import com.google.android.gms.location.ActivityRecognition
 import com.google.android.gms.location.FusedLocationProviderClient
 import com.google.android.gms.location.LocationCallback
@@ -55,8 +58,9 @@ import java.util.concurrent.TimeUnit
  * Inside a quiet zone, points are held back unless the phone is on a trip; the last one held is sent first
  * when recording resumes, so a trip starts where the phone was parked.
  *
- * The foreground notification is minimized while idle and becomes "Trip in progress" (timer + distance)
- * while [TripTracker] thinks the phone is on a trip.
+ * The foreground notification shows the tracking [Status] as its icon, so the mode can be read from the status
+ * bar or the always-on display. In a quiet zone it stays on a minimized channel, without a status bar icon on
+ * phones that allow it (Android raises a foreground service's minimized channel to silent on some phones).
  */
 class TrackingService : Service() {
 
@@ -73,10 +77,15 @@ class TrackingService : Service() {
     private val trip = TripTracker()
     private val tripCheck = object : Runnable {
         override fun run() {
-            if (trip.tick(System.currentTimeMillis(), Motion.current)) updateNotification()
+            // Also catches location being turned off and points waiting too long
+            if (trip.tick(System.currentTimeMillis(), Motion.current)) updateNotification() else refreshStatus()
             handler.postDelayed(this, 60_000)
         }
     }
+    /** Status of the notification last posted (main thread) */
+    private var shownStatus: Status? = null
+    /** When the queue last went from empty to non-empty; null while empty (written on the worker thread) */
+    @Volatile private var pendingSince: Long? = null
 
     /** null until the first location request is made */
     private var lowPower: Boolean? = null
@@ -145,6 +154,7 @@ class TrackingService : Service() {
             if (running) {
                 btDevice = bluetooth.deviceName
                 applyLocationRequest()
+                refreshStatus()
             }
         }
         createChannels()
@@ -171,12 +181,16 @@ class TrackingService : Service() {
             running = true
             currentTrip = trip
             handler.postDelayed(tripCheck, 60_000)
-            Motion.listener = { applyLocationRequest() }
+            Motion.listener = {
+                applyLocationRequest()
+                refreshStatus()
+            }
             zones = settings.zones
             bluetooth.start()
             applyLocationRequest()
             startActivityUpdates()
             scheduleUpload()
+            worker.execute { if (queue.count() > 0) pendingSince = System.currentTimeMillis() }
             getSystemService(ConnectivityManager::class.java).registerDefaultNetworkCallback(networkCallback)
             settings.registerListener(settingsListener)
         }
@@ -300,6 +314,7 @@ class TrackingService : Service() {
         val zone = zones.firstOrNull { it.contains(location.latitude, location.longitude, location.accuracy) }
         val hold = zone != null && !trip.active && !bluetooth.active
         quietZone = if (hold) zone?.name else null
+        refreshStatus()
         val release = if (hold) null else held
         held = if (hold) feature else null
 
@@ -314,6 +329,7 @@ class TrackingService : Service() {
         worker.execute {
             release?.let(queue::add)
             queue.add(feature)
+            if (pendingSince == null) pendingSince = System.currentTimeMillis()
             if (queue.count() >= settings.batchSize) upload()
         }
     }
@@ -332,6 +348,7 @@ class TrackingService : Service() {
         } catch (e: Exception) {
             Log.e(TAG, "Upload failed", e)
         }
+        if (queue.count() == 0L) pendingSince = null
         if (settings.lastUploadOk) {
             backoff.reset()
         } else {
@@ -360,11 +377,48 @@ class TrackingService : Service() {
         return (if (level >= 0 && scale > 0) level.toFloat() / scale else null) to state
     }
 
+    /** What the phone is doing, shown as the notification icon; the first that applies wins. */
+    enum class Status(@DrawableRes val icon: Int) {
+        LOCATION_OFF(R.drawable.ic_status_location_off),
+        /** On a trip, or a Bluetooth trigger device is connected */
+        CAR(R.drawable.ic_status_car),
+        /** Points have been waiting longer than [PROBLEM_AFTER_MS] */
+        UPLOAD_PROBLEM(R.drawable.ic_status_upload_problem),
+        QUIET_ZONE(R.drawable.ic_status_home),
+        PARKED(R.drawable.ic_status_parked),
+        TRACKING(R.drawable.ic_notification),
+    }
+
+    private fun status(): Status {
+        val now = System.currentTimeMillis()
+        return when {
+            !LocationManagerCompat.isLocationEnabled(getSystemService(LocationManager::class.java)) -> Status.LOCATION_OFF
+            trip.active || bluetooth.active -> Status.CAR
+            pendingSince?.let { now - it >= PROBLEM_AFTER_MS } == true -> Status.UPLOAD_PROBLEM
+            quietZone != null -> Status.QUIET_ZONE
+            Motion.current == "stationary" && !movedWhileStill -> Status.PARKED
+            else -> Status.TRACKING
+        }
+    }
+
+    /** Reposts the notification when the status changed (main thread). */
+    private fun refreshStatus() {
+        if (status() != shownStatus) updateNotification()
+    }
+
     private fun createChannels() {
         val nm = getSystemService(NotificationManager::class.java)
-        // Idle: collapsed in the shade, no status bar icon. Trip: status bar icon, still silent.
+        // Quiet zone: minimized, no status bar icon where the phone allows it. Status: status bar and always-on
+        // display icon (silent channels are left off the always-on display on some phones), with no sound.
         nm.createNotificationChannel(NotificationChannel(CHANNEL_IDLE, getString(R.string.channel_idle), NotificationManager.IMPORTANCE_MIN))
-        nm.createNotificationChannel(NotificationChannel(CHANNEL_TRIP, getString(R.string.channel_trip), NotificationManager.IMPORTANCE_LOW))
+        nm.createNotificationChannel(
+            NotificationChannel(CHANNEL_STATUS, getString(R.string.channel_status), NotificationManager.IMPORTANCE_DEFAULT).apply {
+                setSound(null, null)
+                enableVibration(false)
+                setShowBadge(false)
+            },
+        )
+        nm.deleteNotificationChannel(CHANNEL_TRIP_OLD) // before 1.3.0
     }
 
     private fun updateNotification() {
@@ -373,36 +427,58 @@ class TrackingService : Service() {
     }
 
     private fun buildNotification(): Notification {
+        val status = status()
+        shownStatus = status
         val open = PendingIntent.getActivity(
             this, 0, Intent(this, MainActivity::class.java), PendingIntent.FLAG_IMMUTABLE,
         )
-        val builder = if (trip.active && settings.tripNotification) {
-            NotificationCompat.Builder(this, CHANNEL_TRIP)
-                .setContentTitle(getString(R.string.trip_in_progress))
+        val time = DateFormat.getTimeFormat(this)
+        val lastUpload = if (settings.lastUploadAt > 0) {
+            getString(R.string.idle_text, time.format(settings.lastUploadAt), settings.lastUploadResult)
+        } else getString(R.string.idle_text_initial)
+        val channel = if (status == Status.QUIET_ZONE || !settings.tripNotification) CHANNEL_IDLE else CHANNEL_STATUS
+        val builder = NotificationCompat.Builder(this, channel).setShowWhen(false)
+
+        when (status) {
+            Status.LOCATION_OFF -> builder
+                .setContentTitle(getString(R.string.status_location_off))
+                .setContentText(getString(R.string.status_location_off_text))
+            Status.CAR -> if (trip.active) {
+                builder
+                    .setContentTitle(getString(R.string.trip_in_progress))
+                    .setContentText(getString(
+                        R.string.trip_text,
+                        String.format(Locale.getDefault(), "%.1f", trip.distanceM / 1000),
+                        time.format(trip.startMs),
+                    ))
+                    .setWhen(trip.startMs)
+                    .setShowWhen(true)
+                    .setUsesChronometer(true) // live elapsed time
+            } else {
+                builder
+                    .setContentTitle(getString(R.string.status_in_car))
+                    .setContentText(getString(R.string.status_in_car_text, bluetooth.deviceName.orEmpty()))
+            }
+            Status.UPLOAD_PROBLEM -> builder
+                .setContentTitle(getString(R.string.status_upload_problem))
                 .setContentText(getString(
-                    R.string.trip_text,
-                    String.format(Locale.getDefault(), "%.1f", trip.distanceM / 1000),
-                    DateFormat.getTimeFormat(this).format(trip.startMs),
+                    R.string.status_upload_problem_text,
+                    time.format(pendingSince ?: System.currentTimeMillis()),
+                    if (online()) settings.lastUploadResult else getString(R.string.status_no_network),
                 ))
-                .setWhen(trip.startMs)
-                .setShowWhen(true)
-                .setUsesChronometer(true) // live elapsed time
-        } else {
-            val text = if (settings.lastUploadAt > 0) {
-                getString(
-                    R.string.idle_text,
-                    DateFormat.getTimeFormat(this).format(settings.lastUploadAt),
-                    settings.lastUploadResult,
-                )
-            } else getString(R.string.idle_text_initial)
-            NotificationCompat.Builder(this, CHANNEL_IDLE)
-                .setContentTitle(getString(R.string.idle_title))
-                .setContentText(text)
-                .setShowWhen(false)
+            Status.QUIET_ZONE -> builder
+                .setContentTitle(getString(R.string.status_quiet_zone, quietZone.orEmpty()))
+                .setContentText(lastUpload)
+            Status.PARKED -> builder
+                .setContentTitle(getString(R.string.status_parked))
+                .setContentText(lastUpload)
+            Status.TRACKING -> builder
+                .setContentTitle(getString(R.string.status_tracking))
+                .setContentText(lastUpload)
         }
 
         return builder
-            .setSmallIcon(R.drawable.ic_notification)
+            .setSmallIcon(status.icon)
             .setColor(getColor(R.color.brand))
             .setContentIntent(open)
             .setOngoing(true)
@@ -416,7 +492,9 @@ class TrackingService : Service() {
     companion object {
         private const val TAG = "TrackingService"
         private const val CHANNEL_IDLE = "idle"
-        private const val CHANNEL_TRIP = "trip"
+        private const val CHANNEL_STATUS = "status"
+        private const val CHANNEL_TRIP_OLD = "trip"
+        private const val PROBLEM_AFTER_MS = 15 * 60_000L
         private const val NOTIFICATION_ID = 1
         private const val MOVING_SPEED_MS = 5f
         const val ACTION_UPLOAD = "io.github.happytechca.overland.UPLOAD"

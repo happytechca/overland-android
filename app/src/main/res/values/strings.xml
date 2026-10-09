@@ -1,12 +1,21 @@
 <resources>
     <string name="app_name">Overland</string>
-    <string name="channel_idle">Tracking (waiting for a trip)</string>
-    <string name="channel_trip">Trip in progress</string>
-    <string name="idle_title">Waiting for a trip</string>
+    <string name="channel_idle">In a quiet zone</string>
+    <string name="channel_status">Tracking status</string>
     <string name="idle_text">Last upload %1$s · %2$s</string>
     <string name="idle_text_initial">Tracking is on</string>
     <string name="trip_in_progress">Trip in progress</string>
     <string name="trip_text">%1$s km · started at %2$s</string>
+    <string name="status_in_car">In the car</string>
+    <string name="status_in_car_text">%s connected · the trip starts when you drive off</string>
+    <string name="status_upload_problem">Points not uploading</string>
+    <string name="status_upload_problem_text">Waiting since %1$s · %2$s</string>
+    <string name="status_no_network">no network</string>
+    <string name="status_location_off">Location is off</string>
+    <string name="status_location_off_text">Turn on location to record trips</string>
+    <string name="status_quiet_zone">In quiet zone “%s”</string>
+    <string name="status_parked">Parked</string>
+    <string name="status_tracking">Tracking</string>
 
     <!-- Home -->
     <string name="settings">Settings</string>
@@ -81,8 +90,8 @@
     <string name="profile_low_help">A balanced-power fix every ~2 min. Rougher tracks, least battery.</string>
     <string name="start_on_boot">Start on boot</string>
     <string name="start_on_boot_help">Resume tracking after a reboot or app update</string>
-    <string name="trip_notification">Trip notification</string>
-    <string name="trip_notification_help">Show “Trip in progress” with a live timer and distance while driving</string>
+    <string name="trip_notification">Status icon</string>
+    <string name="trip_notification_help">Show the tracking state (in the car, parked, tracking, problem) as an icon in the status bar and on the always-on display. Hidden in quiet zones.</string>
     <string name="bt_trigger">Bluetooth trigger</string>
     <string name="bt_trigger_help">High-accuracy GPS while a chosen device is connected, like your car, so trips are recorded from the start</string>
     <string name="bt_devices">Devices</string>
