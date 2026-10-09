@@ -173,13 +173,15 @@ class MainActivity : AppCompatActivity() {
         val motion = MotionUi.of(Motion.current ?: settings.lastMotion)
         binding.motionIcon.setImageResource(motion.icon)
         binding.motion.setText(motion.label)
-        binding.motionSub.setText(
-            when {
-                !running -> R.string.motion_sub_off
-                high -> R.string.motion_sub_high
-                else -> R.string.motion_sub_low
-            },
-        )
+        val btDevice = TrackingService.btDevice
+        val quietZone = TrackingService.quietZone
+        binding.motionSub.text = when {
+            !running -> getString(R.string.motion_sub_off)
+            btDevice != null -> getString(R.string.motion_sub_bt, btDevice)
+            quietZone != null -> getString(R.string.motion_sub_zone, quietZone)
+            high -> getString(R.string.motion_sub_high)
+            else -> getString(R.string.motion_sub_low)
+        }
 
         val trip = TrackingService.currentTrip?.takeIf { it.active }
         binding.trip.isVisible = trip != null

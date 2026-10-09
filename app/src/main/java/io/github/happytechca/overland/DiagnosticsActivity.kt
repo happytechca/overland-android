@@ -118,7 +118,7 @@ class DiagnosticsActivity : AppCompatActivity() {
 
         // Sections
         binding.sections.removeAllViews()
-        section(R.string.permissions, Health.checks.filter { it != Check.BATTERY }.map(::checkRow))
+        section(R.string.permissions, Health.checks(this).filter { it != Check.BATTERY }.map(::checkRow))
         section(R.string.background, listOfNotNull(checkRow(Check.BATTERY), serviceRow(), oemRow()))
         section(R.string.sensors, listOf(playServicesRow()))
     }
@@ -167,6 +167,7 @@ class DiagnosticsActivity : AppCompatActivity() {
             Check.ACTIVITY -> CheckText(R.string.check_activity_ok, R.string.check_activity_bad, R.string.allow, R.drawable.ic_directions_walk)
             Check.NOTIFICATIONS -> CheckText(R.string.check_notifications_ok, R.string.check_notifications_bad, R.string.allow, R.drawable.ic_notifications)
             Check.BATTERY -> CheckText(R.string.check_battery_ok, R.string.check_battery_bad, R.string.fix_battery, R.drawable.ic_battery_saver)
+            Check.BLUETOOTH -> CheckText(R.string.check_bluetooth_ok, R.string.check_bluetooth_bad, R.string.allow, R.drawable.ic_bluetooth)
         }
         return if (ok) {
             Row(R.drawable.ic_check_circle, getColor(R.color.ok), getString(check.title), getString(R.string.status_ok), getString(okDesc))
@@ -252,6 +253,7 @@ class DiagnosticsActivity : AppCompatActivity() {
                 )
             }
             Check.BATTERY -> requestBatteryExemption()
+            Check.BLUETOOTH -> if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) ask(Manifest.permission.BLUETOOTH_CONNECT)
         }
     }
 

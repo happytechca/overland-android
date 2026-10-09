@@ -1,20 +1,32 @@
 package io.github.happytechca.overland
 
+import android.Manifest
+import android.annotation.SuppressLint
+import android.bluetooth.BluetoothManager
 import android.content.Intent
 import android.content.res.ColorStateList
 import android.net.Uri
+import android.os.Build
 import android.os.Bundle
 import android.view.View
 import android.widget.EditText
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.view.isVisible
 import androidx.core.widget.TextViewCompat
 import androidx.core.widget.doAfterTextChanged
+import com.google.android.gms.location.LocationServices
+import com.google.android.gms.location.Priority
+import com.google.android.gms.tasks.CancellationTokenSource
 import com.google.android.material.R as MaterialR
 import com.google.android.material.chip.Chip
 import com.google.android.material.chip.ChipGroup
+import com.google.android.material.dialog.MaterialAlertDialogBuilder
 import io.github.happytechca.overland.databinding.ActivitySettingsBinding
+import io.github.happytechca.overland.databinding.DialogZoneBinding
 import io.github.happytechca.overland.databinding.ItemChoiceBinding
+import io.github.happytechca.overland.databinding.ItemZoneBinding
+import java.util.Locale
 
 /** Settings are saved as soon as they change; the running service picks them up. */
 class SettingsActivity : AppCompatActivity() {
@@ -23,6 +35,15 @@ class SettingsActivity : AppCompatActivity() {
     private lateinit var settings: Settings
     private var testing = false
     private var profileRows: Map<String, ItemChoiceBinding> = emptyMap()
+    private var locating = false
+    private val btPermission = registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+        if (granted) {
+            enableBluetoothTrigger()
+        } else {
+            binding.btSwitch.isChecked = false
+            binding.root.snack(getString(R.string.bt_permission_needed))
+        }
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -65,6 +86,27 @@ class SettingsActivity : AppCompatActivity() {
         binding.tripSwitch.setOnCheckedChangeListener { _, on -> settings.tripNotification = on; saved() }
         binding.tripRow.setOnClickListener { binding.tripSwitch.toggle() }
 
+        // Bluetooth trigger
+        binding.btSwitch.isChecked = settings.btTrigger
+        binding.btSwitch.setOnCheckedChangeListener { _, on ->
+            when {
+                !on -> {
+                    if (settings.btTrigger) saved()
+                    settings.btTrigger = false
+                    showBluetooth()
+                }
+                BluetoothTrigger.hasPermission(this) -> enableBluetoothTrigger()
+                else -> btPermission.launch(Manifest.permission.BLUETOOTH_CONNECT)
+            }
+        }
+        binding.btRow.setOnClickListener { binding.btSwitch.toggle() }
+        binding.btDevicesRow.setOnClickListener { chooseDevices() }
+        showBluetooth()
+
+        // Quiet zones
+        binding.addZone.setOnClickListener { addZone() }
+        showZones()
+
         // Diagnostics, About
         binding.diagnostics.setOnClickListener { startActivity(Intent(this, DiagnosticsActivity::class.java)) }
         binding.version.text = packageManager.getPackageInfo(packageName, 0).versionName
@@ -88,6 +130,133 @@ class SettingsActivity : AppCompatActivity() {
     }
 
     private fun saved() = binding.root.snack(getString(R.string.saved))
+
+    private fun enableBluetoothTrigger() {
+        settings.btTrigger = true
+        showBluetooth()
+        if (settings.btDevices.isEmpty()) chooseDevices() else saved()
+    }
+
+    private fun showBluetooth() {
+        binding.btDevicesRow.isVisible = settings.btTrigger
+        val devices = settings.btDevices
+        binding.btDevices.text =
+            if (devices.isEmpty()) getString(R.string.bt_devices_none) else devices.joinToString(", ") { it.name }
+    }
+
+    /** Picks the trigger devices among the paired ones (plus any chosen earlier and since unpaired, to remove them). */
+    @SuppressLint("MissingPermission") // checked by BluetoothTrigger.hasPermission()
+    private fun chooseDevices() {
+        if (!BluetoothTrigger.hasPermission(this)) {
+            btPermission.launch(Manifest.permission.BLUETOOTH_CONNECT)
+            return
+        }
+        val bonded = try {
+            getSystemService(BluetoothManager::class.java)?.adapter?.bondedDevices.orEmpty()
+                .map { BtDevice(it.address, it.name ?: it.address) }
+        } catch (e: SecurityException) {
+            emptyList()
+        }
+        val chosen = settings.btDevices
+        val devices = (bonded + chosen).distinctBy { it.address }.sortedBy { it.name.lowercase() }
+        if (devices.isEmpty()) {
+            binding.root.snack(getString(R.string.bt_no_paired))
+            return
+        }
+        val checked = devices.map { d -> chosen.any { it.address == d.address } }.toBooleanArray()
+        MaterialAlertDialogBuilder(this)
+            .setTitle(R.string.bt_choose)
+            .setMultiChoiceItems(devices.map { it.name }.toTypedArray(), checked) { _, i, on -> checked[i] = on }
+            .setPositiveButton(R.string.save) { _, _ ->
+                settings.btDevices = devices.filterIndexed { i, _ -> checked[i] }
+                showBluetooth()
+                saved()
+            }
+            .setNegativeButton(android.R.string.cancel, null)
+            .show()
+    }
+
+    private fun showZones() {
+        binding.zones.removeAllViews()
+        settings.zones.forEachIndexed { index, zone ->
+            ItemZoneBinding.inflate(layoutInflater, binding.zones, true).apply {
+                title.text = zone.name
+                subtitle.text = getString(
+                    R.string.zone_subtitle, zone.radiusM,
+                    String.format(Locale.US, "%.5f, %.5f", zone.latitude, zone.longitude),
+                )
+                root.setOnClickListener { editZone(index) }
+            }
+        }
+    }
+
+    /** New zone centred on a fresh fix */
+    @SuppressLint("MissingPermission") // checked by hasLocationPermission()
+    private fun addZone() {
+        if (locating) return
+        if (!TrackingService.hasLocationPermission(this)) {
+            binding.root.snack(getString(R.string.location_required))
+            return
+        }
+        locating = true
+        binding.addZone.isEnabled = false
+        binding.root.snack(getString(R.string.zone_locating))
+        LocationServices.getFusedLocationProviderClient(this)
+            .getCurrentLocation(Priority.PRIORITY_HIGH_ACCURACY, CancellationTokenSource().token)
+            .addOnCompleteListener { task ->
+                locating = false
+                binding.addZone.isEnabled = true
+                val location = task.result.takeIf { task.isSuccessful }
+                if (location == null) {
+                    binding.root.snack(getString(R.string.zone_no_location))
+                    return@addOnCompleteListener
+                }
+                val name = if (settings.zones.isEmpty()) getString(R.string.zone_default_name) else ""
+                zoneDialog(Zone(name, location.latitude, location.longitude, 100), isNew = true) { zone ->
+                    settings.zones = settings.zones + zone
+                    showZones()
+                    saved()
+                }
+            }
+    }
+
+    private fun editZone(index: Int) {
+        val zone = settings.zones.getOrNull(index) ?: return
+        zoneDialog(zone, isNew = false, onDelete = {
+            settings.zones = settings.zones.filterIndexed { i, _ -> i != index }
+            showZones()
+            binding.root.snack(getString(R.string.zone_deleted))
+        }) { edited ->
+            settings.zones = settings.zones.mapIndexed { i, z -> if (i == index) edited else z }
+            showZones()
+            saved()
+        }
+    }
+
+    private fun zoneDialog(zone: Zone, isNew: Boolean, onDelete: (() -> Unit)? = null, onSave: (Zone) -> Unit) {
+        val view = DialogZoneBinding.inflate(layoutInflater)
+        view.name.setText(zone.name)
+        view.radiusHelp.isVisible = isNew
+        var radius = zone.radiusM
+        (RADII + radius).distinct().sorted().forEach { r ->
+            val chip = layoutInflater.inflate(R.layout.item_chip, view.radii, false) as Chip
+            chip.id = View.generateViewId()
+            chip.text = getString(R.string.meters, r)
+            chip.isChecked = r == radius
+            chip.setOnClickListener { radius = r }
+            view.radii.addView(chip)
+        }
+        MaterialAlertDialogBuilder(this)
+            .setTitle(if (isNew) R.string.zone_new else R.string.zone_edit)
+            .setView(view.root)
+            .setPositiveButton(R.string.save) { _, _ ->
+                val name = view.name.text.toString().trim().ifEmpty { getString(R.string.zone_default_name) }
+                onSave(zone.copy(name = name, radiusM = radius))
+            }
+            .setNegativeButton(android.R.string.cancel, null)
+            .apply { if (onDelete != null) setNeutralButton(R.string.delete) { _, _ -> onDelete() } }
+            .show()
+    }
 
     /** Saves on every change; says "Saved" when leaving a field that changed. */
     private fun bindText(field: EditText, value: String, save: (String) -> Unit) {
@@ -140,8 +309,9 @@ class SettingsActivity : AppCompatActivity() {
     }
 
     companion object {
-        private val INTERVALS = listOf(15 to "15 s", 30 to "30 s", 60 to "1 min", 300 to "5 min", 900 to "15 min")
+        private val INTERVALS = listOf(30 to "30 s", 60 to "1 min", 300 to "5 min", 900 to "15 min")
         private val BATCHES = listOf(50, 100, 200, 500)
+        private val RADII = listOf(50, 100, 200, 500)
         private val PROFILES = listOf(
             Triple(Settings.PROFILE_AUTO, R.string.profile_auto, R.string.profile_auto_help),
             Triple(Settings.PROFILE_HIGH, R.string.profile_high, R.string.profile_high_help),

@@ -42,7 +42,12 @@ import java.util.concurrent.TimeUnit
  * With the adaptive profile, GPS runs at high accuracy while moving and drops to a low-power request when
  * activity recognition reports the phone as still (like Overland iOS pausing). A fix far from where the phone
  * went still switches back to high accuracy in case activity recognition is slow to notice. The other profiles
- * stay at high accuracy or low power.
+ * stay at high accuracy or low power. While low power, fixes other apps request (e.g. navigation) are also
+ * received at no cost; a fast one switches back to high accuracy.
+ *
+ * With the Bluetooth trigger, a chosen device being connected (e.g. the car) forces high accuracy.
+ * Inside a quiet zone, points are held back unless the phone is on a trip; the last one held is sent first
+ * when recording resumes, so a trip starts where the phone was parked.
  *
  * The foreground notification is minimized while idle and becomes "Trip in progress" (timer + distance)
  * while [TripTracker] thinks the phone is on a trip.
@@ -71,6 +76,10 @@ class TrackingService : Service() {
     private var lastLocation: Location? = null
     /** Movement seen while activity recognition still says "stationary" */
     private var movedWhileStill = false
+    private lateinit var bluetooth: BluetoothTrigger
+    private var zones: List<Zone> = emptyList()
+    /** Last point held back in a quiet zone (Overland JSON) */
+    private var held: String? = null
 
     private val activityIntent by lazy {
         PendingIntent.getBroadcast(
@@ -85,12 +94,21 @@ class TrackingService : Service() {
         }
     }
 
+    /** Fixes requested by other apps, received while low power */
+    private val passiveCallback = object : LocationCallback() {
+        override fun onLocationResult(result: LocationResult) {
+            result.locations.forEach(::onLocation)
+        }
+    }
+
     /** Settings changed from the Settings screen while running (main thread) */
     private val settingsListener = SharedPreferences.OnSharedPreferenceChangeListener { _, key ->
         when (key) {
             Settings.KEY_PROFILE -> applyLocationRequest()
             Settings.KEY_UPLOAD_INTERVAL -> scheduleUpload()
             Settings.KEY_TRIP_NOTIFICATION -> updateNotification()
+            Settings.KEY_BT_TRIGGER, Settings.KEY_BT_DEVICES -> bluetooth.refresh()
+            Settings.KEY_ZONES -> zones = settings.zones
         }
     }
 
@@ -101,6 +119,13 @@ class TrackingService : Service() {
         settings = Settings(this)
         queue = PointQueue.get(this)
         fused = LocationServices.getFusedLocationProviderClient(this)
+        bluetooth = BluetoothTrigger(this, settings) {
+            // Connected-device lookups answer asynchronously, possibly after the service stopped
+            if (running) {
+                btDevice = bluetooth.deviceName
+                applyLocationRequest()
+            }
+        }
         createChannels()
     }
 
@@ -126,6 +151,8 @@ class TrackingService : Service() {
             currentTrip = trip
             handler.postDelayed(tripCheck, 60_000)
             Motion.listener = { applyLocationRequest() }
+            zones = settings.zones
+            bluetooth.start()
             applyLocationRequest()
             startActivityUpdates()
             scheduleUpload()
@@ -138,13 +165,17 @@ class TrackingService : Service() {
 
     @SuppressLint("MissingPermission") // checked by hasActivityPermission()
     override fun onDestroy() {
+        if (running) bluetooth.stop() // only started once running
         running = false
         currentTrip = null
         highAccuracy = null
+        btDevice = null
+        quietZone = null
         settings.unregisterListener(settingsListener)
         handler.removeCallbacks(tripCheck)
         Motion.listener = null
         fused.removeLocationUpdates(locationCallback)
+        fused.removeLocationUpdates(passiveCallback)
         if (hasActivityPermission(this)) {
             ActivityRecognition.getClient(this).removeActivityUpdates(activityIntent)
         }
@@ -156,15 +187,15 @@ class TrackingService : Service() {
     /** Uploads every upload interval, rescheduled when the interval changes. */
     private fun scheduleUpload() {
         uploadTask?.cancel(false)
-        val interval = settings.uploadIntervalSec.coerceAtLeast(15).toLong()
+        val interval = settings.uploadIntervalSec.toLong()
         uploadTask = worker.scheduleWithFixedDelay(::upload, interval, interval, TimeUnit.SECONDS)
     }
 
-    /** (Re)requests locations with the accuracy matching the profile and current motion. */
+    /** (Re)requests locations with the accuracy matching the profile, current motion and Bluetooth trigger. */
     @SuppressLint("MissingPermission")
     private fun applyLocationRequest() {
         if (Motion.current != "stationary") movedWhileStill = false
-        val wantLowPower = when (settings.accuracyProfile) {
+        val wantLowPower = !bluetooth.active && when (settings.accuracyProfile) {
             Settings.PROFILE_HIGH -> false
             Settings.PROFILE_LOW -> true
             else -> Motion.current == "stationary" && !movedWhileStill
@@ -184,8 +215,15 @@ class TrackingService : Service() {
                 .build()
         }
         fused.removeLocationUpdates(locationCallback)
+        fused.removeLocationUpdates(passiveCallback)
         try {
             fused.requestLocationUpdates(request, locationCallback, Looper.getMainLooper())
+            if (wantLowPower) {
+                val passive = LocationRequest.Builder(Priority.PRIORITY_PASSIVE, 10_000)
+                    .setMinUpdateIntervalMillis(5_000)
+                    .build()
+                fused.requestLocationUpdates(passive, passiveCallback, Looper.getMainLooper())
+            }
         } catch (e: SecurityException) {
             Log.e(TAG, "Location permission revoked", e)
             stopSelf()
@@ -202,11 +240,14 @@ class TrackingService : Service() {
     }
 
     private fun onLocation(location: Location) {
+        // The same fix can come through both the main and the passive request
+        if (location.time <= (lastLocation?.time ?: 0)) return
         lastLocation = location
 
         val anchor = stillAnchor
         val adaptive = settings.accuracyProfile == Settings.PROFILE_AUTO
-        if (adaptive && lowPower == true && anchor != null && location.accuracy < 100 && location.distanceTo(anchor) > 200) {
+        val fast = location.hasSpeed() && location.speed >= MOVING_SPEED_MS && location.accuracy <= 50
+        if (adaptive && lowPower == true && (fast || anchor != null && location.accuracy < 100 && location.distanceTo(anchor) > 200)) {
             movedWhileStill = true
             applyLocationRequest()
         } else if (lowPower == true && anchor == null) {
@@ -230,6 +271,12 @@ class TrackingService : Service() {
         val feature = OverlandPayload.feature(point).toString()
         if (trip.onPoint(point)) updateNotification()
 
+        val zone = zones.firstOrNull { it.contains(location.latitude, location.longitude, location.accuracy) }
+        val hold = zone != null && !trip.active && !bluetooth.active
+        quietZone = if (hold) zone?.name else null
+        val release = if (hold) null else held
+        held = if (hold) feature else null
+
         settings.lastLocationAt = location.time
         if (Motion.current != null) settings.lastMotion = Motion.current
         settings.lastLocationText = String.format(
@@ -237,13 +284,17 @@ class TrackingService : Service() {
             if (location.hasSpeed()) String.format(Locale.US, ", %.0f km/h", location.speed * 3.6) else "",
         )
 
+        if (hold) return
         worker.execute {
+            release?.let(queue::add)
             queue.add(feature)
             if (queue.count() >= settings.batchSize) upload()
         }
     }
 
+    /** Sends what's queued; no request at all when nothing was recorded (e.g. in a quiet zone). */
     private fun upload() {
+        if (queue.count() == 0L) return
         try {
             Uploader.uploadAll(this)
             handler.post(::updateNotification)
@@ -323,6 +374,7 @@ class TrackingService : Service() {
         private const val CHANNEL_IDLE = "idle"
         private const val CHANNEL_TRIP = "trip"
         private const val NOTIFICATION_ID = 1
+        private const val MOVING_SPEED_MS = 5f
         const val ACTION_UPLOAD = "io.github.happytechca.overland.UPLOAD"
 
         @Volatile var running = false
@@ -330,6 +382,14 @@ class TrackingService : Service() {
 
         /** Whether the current location request is high accuracy; null when not running. */
         @Volatile var highAccuracy: Boolean? = null
+            private set
+
+        /** Name of the connected Bluetooth trigger device; null when none or not running. */
+        @Volatile var btDevice: String? = null
+            private set
+
+        /** Name of the quiet zone points are being held back in; null when recording or not running. */
+        @Volatile var quietZone: String? = null
             private set
 
         /** The running service's trip state, for the main screen (main thread only). */

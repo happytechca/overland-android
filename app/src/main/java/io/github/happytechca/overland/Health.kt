@@ -18,14 +18,17 @@ enum class Check(@StringRes val title: Int) {
     ACTIVITY(R.string.check_activity),
     NOTIFICATIONS(R.string.check_notifications),
     BATTERY(R.string.check_battery),
+    /** Only while the Bluetooth trigger is on */
+    BLUETOOTH(R.string.check_bluetooth),
 }
 
 object Health {
 
-    /** Checks that apply to this Android version */
-    val checks: List<Check> = Check.entries.filter {
+    /** Checks that apply to this Android version and the current settings */
+    fun checks(context: Context): List<Check> = Check.entries.filter {
         when (it) {
             Check.BACKGROUND, Check.ACTIVITY -> Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q
+            Check.BLUETOOTH -> Build.VERSION.SDK_INT >= Build.VERSION_CODES.S && Settings(context).btTrigger
             else -> true
         }
     }
@@ -37,9 +40,10 @@ object Health {
         Check.ACTIVITY -> TrackingService.hasActivityPermission(context)
         Check.NOTIFICATIONS -> NotificationManagerCompat.from(context).areNotificationsEnabled()
         Check.BATTERY -> context.getSystemService(PowerManager::class.java).isIgnoringBatteryOptimizations(context.packageName)
+        Check.BLUETOOTH -> BluetoothTrigger.hasPermission(context)
     }
 
-    fun failing(context: Context): List<Check> = checks.filterNot { passes(context, it) }
+    fun failing(context: Context): List<Check> = checks(context).filterNot { passes(context, it) }
 
     /** Only approximate location was granted (Android 12+ lets the user pick) */
     fun coarseOnly(context: Context) =

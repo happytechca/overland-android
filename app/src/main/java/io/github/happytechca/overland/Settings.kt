@@ -20,8 +20,9 @@ class Settings(context: Context) {
         get() = prefs.getString("device_id", DEFAULT_DEVICE_ID)!!
         set(v) = prefs.edit { putString("device_id", v) }
 
+    /** At least 30 s (15 s was an option before 1.2.0) */
     var uploadIntervalSec: Int
-        get() = prefs.getInt(KEY_UPLOAD_INTERVAL, 60)
+        get() = prefs.getInt(KEY_UPLOAD_INTERVAL, 60).coerceAtLeast(30)
         set(v) = prefs.edit { putInt(KEY_UPLOAD_INTERVAL, v) }
 
     /** Most points per request */
@@ -42,6 +43,19 @@ class Settings(context: Context) {
     var tripNotification: Boolean
         get() = prefs.getBoolean(KEY_TRIP_NOTIFICATION, true)
         set(v) = prefs.edit { putBoolean(KEY_TRIP_NOTIFICATION, v) }
+
+    /** High accuracy while one of [btDevices] is connected */
+    var btTrigger: Boolean
+        get() = prefs.getBoolean(KEY_BT_TRIGGER, false)
+        set(v) = prefs.edit { putBoolean(KEY_BT_TRIGGER, v) }
+
+    var btDevices: List<BtDevice>
+        get() = BtDevice.fromJson(prefs.getString(KEY_BT_DEVICES, null))
+        set(v) = prefs.edit { putString(KEY_BT_DEVICES, BtDevice.toJson(v)) }
+
+    var zones: List<Zone>
+        get() = Zone.fromJson(prefs.getString(KEY_ZONES, null))
+        set(v) = prefs.edit { putString(KEY_ZONES, Zone.toJson(v)) }
 
     /** The manufacturer guide on dontkillmyapp.com was opened from Diagnostics */
     var oemReviewed: Boolean
@@ -92,6 +106,9 @@ class Settings(context: Context) {
         const val KEY_UPLOAD_INTERVAL = "upload_interval"
         const val KEY_PROFILE = "accuracy_profile"
         const val KEY_TRIP_NOTIFICATION = "trip_notification"
+        const val KEY_BT_TRIGGER = "bt_trigger"
+        const val KEY_BT_DEVICES = "bt_devices"
+        const val KEY_ZONES = "zones"
 
         const val PROFILE_AUTO = "auto"
         const val PROFILE_HIGH = "high"

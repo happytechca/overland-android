@@ -95,11 +95,14 @@ class TripTracker(
     companion object {
         private val STILL_MOTIONS = setOf("stationary", "walking", "running")
 
-        fun distance(a: Point, b: Point): Double {
-            val dLat = Math.toRadians(b.latitude - a.latitude)
-            val dLng = Math.toRadians(b.longitude - a.longitude)
+        fun distance(a: Point, b: Point): Double = distance(a.latitude, a.longitude, b.latitude, b.longitude)
+
+        /** Metres between two coordinates (haversine) */
+        fun distance(lat1: Double, lng1: Double, lat2: Double, lng2: Double): Double {
+            val dLat = Math.toRadians(lat2 - lat1)
+            val dLng = Math.toRadians(lng2 - lng1)
             val h = sin(dLat / 2).pow(2) +
-                cos(Math.toRadians(a.latitude)) * cos(Math.toRadians(b.latitude)) * sin(dLng / 2).pow(2)
+                cos(Math.toRadians(lat1)) * cos(Math.toRadians(lat2)) * sin(dLng / 2).pow(2)
             return 2 * 6_371_000 * asin(minOf(1.0, sqrt(h)))
         }
     }

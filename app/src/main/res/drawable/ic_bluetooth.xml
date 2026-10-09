@@ -1,0 +1,9 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp" android:height="24dp"
+    android:viewportWidth="960" android:viewportHeight="960"
+    android:tint="?attr/colorControlNormal">
+    <!-- Material Symbols Rounded "bluetooth" (Apache 2.0) -->
+    <group android:translateY="960">
+        <path android:fillColor="@android:color/white" android:pathData="M440-332 290-182q-11 11-28 11t-28-11q-11-11-11-28t11-28l184-184-184-184q-11-11-11-28t11-28q11-11 28-11t28 11l150 150v-264q0-23 19.5-31.5T495-801l171 171q6 6 9 13.5t3 15.5q0 8-3 15.5t-9 13.5L534-440l132 132q6 6 9 13.5t3 15.5q0 8-3 15.5t-9 13.5L495-79q-16 16-35.5 7.5T440-103v-229Zm80-188 92-92-92-90v182Zm0 342 92-90-92-92v182Z" />
+    </group>
+</vector>

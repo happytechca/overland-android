@@ -16,7 +16,13 @@ paid dependencies and targets current Android versions (Android 8.0 and newer).
 - Background tracking in a foreground service, resumed automatically after a reboot or app update.
 - Battery-aware: high-accuracy GPS (~10 s) while moving, a low-power fix every ~2 min while the
   phone is still (detected with Google's activity recognition). Can also be set to always high accuracy
-  or always low power.
+  or always low power. While in low power, fixes requested by other apps (e.g. navigation) are picked up
+  for free, and a fast one switches straight back to GPS.
+- **Bluetooth trigger** (optional): high-accuracy GPS while a chosen paired device, such as your car, is
+  connected, so trips are recorded from the first metre instead of when motion detection catches up.
+- **Quiet zones** (optional): inside a zone you set (home, office…), points aren't sent unless you're on
+  a trip, so walking around inside sends nothing. Location keeps running as usual, so trip starts aren't
+  delayed, and the last point held back is sent first so a trip starts where you were parked.
 - `motion` (`driving`, `cycling`, `walking`, `running`, `stationary`) on every point.
 - Offline queue: points are stored on the phone and uploaded in batches; nothing is lost without
   a connection.
@@ -28,7 +34,7 @@ paid dependencies and targets current Android versions (Android 8.0 and newer).
 ## Server API
 
 Points are POSTed to the configured URL every upload interval (default 1 min), in batches of up to 200
-(both can be changed in Settings):
+(both can be changed in Settings). Nothing is sent when no new points were recorded:
 
 ```http
 POST /your/endpoint HTTP/1.1
