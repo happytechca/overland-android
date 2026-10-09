@@ -55,8 +55,8 @@ import java.util.concurrent.TimeUnit
  * With the Bluetooth trigger, a chosen device being connected (e.g. the car) forces high accuracy.
  * Failed uploads back off exponentially; nothing is tried without a network, and a network coming back
  * retries right away.
- * Inside a quiet zone, points are held back unless the phone is on a trip; the last one held is sent first
- * when recording resumes, so a trip starts where the phone was parked.
+ * Inside a quiet zone, points are held back and location stays low power unless the phone is on a trip; the
+ * last one held is sent first when recording resumes, so a trip starts where the phone was parked.
  *
  * The foreground notification shows the tracking [Status] as its icon, so the mode can be read from the status
  * bar or the always-on display. In a quiet zone it stays on a minimized channel, without a status bar icon on
@@ -231,15 +231,20 @@ class TrackingService : Service() {
         uploadTask = worker.scheduleWithFixedDelay(::upload, interval, interval, TimeUnit.SECONDS)
     }
 
-    /** (Re)requests locations with the accuracy matching the profile, current motion and Bluetooth trigger. */
+    /**
+     * (Re)requests locations with the accuracy matching the profile, current motion, Bluetooth trigger and quiet
+     * zone. Points held in a quiet zone aren't sent, so it's low power there whatever the profile, until a trip
+     * starts, the phone is in a vehicle or a fix lands outside the zone.
+     */
     @SuppressLint("MissingPermission")
     private fun applyLocationRequest() {
         if (Motion.current != "stationary") movedWhileStill = false
-        val wantLowPower = !bluetooth.active && when (settings.accuracyProfile) {
+        val inVehicle = Motion.current == "driving" || Motion.current == "cycling"
+        val wantLowPower = !bluetooth.active && (quietZone != null && !inVehicle || when (settings.accuracyProfile) {
             Settings.PROFILE_HIGH -> false
             Settings.PROFILE_LOW -> true
             else -> Motion.current == "stationary" && !movedWhileStill
-        }
+        })
         if (wantLowPower == lowPower) return
         lowPower = wantLowPower
         highAccuracy = !wantLowPower
@@ -313,7 +318,9 @@ class TrackingService : Service() {
 
         val zone = zones.firstOrNull { it.contains(location.latitude, location.longitude, location.accuracy) }
         val hold = zone != null && !trip.active && !bluetooth.active
+        val wasQuiet = quietZone != null
         quietZone = if (hold) zone?.name else null
+        if (hold != wasQuiet) applyLocationRequest()
         refreshStatus()
         val release = if (hold) null else held
         held = if (hold) feature else null
@@ -410,7 +417,12 @@ class TrackingService : Service() {
         val nm = getSystemService(NotificationManager::class.java)
         // Quiet zone: minimized, no status bar icon where the phone allows it. Status: status bar and always-on
         // display icon (silent channels are left off the always-on display on some phones), with no sound.
-        nm.createNotificationChannel(NotificationChannel(CHANNEL_IDLE, getString(R.string.channel_idle), NotificationManager.IMPORTANCE_MIN))
+        // Neither counts as an app icon badge: it's the ongoing service notification, it can't be dismissed.
+        nm.createNotificationChannel(
+            NotificationChannel(CHANNEL_IDLE, getString(R.string.channel_idle), NotificationManager.IMPORTANCE_MIN).apply {
+                setShowBadge(false)
+            },
+        )
         nm.createNotificationChannel(
             NotificationChannel(CHANNEL_STATUS, getString(R.string.channel_status), NotificationManager.IMPORTANCE_DEFAULT).apply {
                 setSound(null, null)
@@ -419,6 +431,7 @@ class TrackingService : Service() {
             },
         )
         nm.deleteNotificationChannel(CHANNEL_TRIP_OLD) // before 1.3.0
+        nm.deleteNotificationChannel(CHANNEL_IDLE_OLD) // before 1.3.2, showed a badge
     }
 
     private fun updateNotification() {
@@ -491,9 +504,10 @@ class TrackingService : Service() {
 
     companion object {
         private const val TAG = "TrackingService"
-        private const val CHANNEL_IDLE = "idle"
+        private const val CHANNEL_IDLE = "quiet"
         private const val CHANNEL_STATUS = "status"
         private const val CHANNEL_TRIP_OLD = "trip"
+        private const val CHANNEL_IDLE_OLD = "idle"
         private const val PROBLEM_AFTER_MS = 15 * 60_000L
         private const val NOTIFICATION_ID = 1
         private const val MOVING_SPEED_MS = 5f

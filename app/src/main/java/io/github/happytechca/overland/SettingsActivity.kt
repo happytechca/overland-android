@@ -311,7 +311,7 @@ class SettingsActivity : AppCompatActivity() {
     companion object {
         private val INTERVALS = listOf(30 to "30 s", 60 to "1 min", 300 to "5 min", 900 to "15 min")
         private val BATCHES = listOf(50, 100, 200, 500)
-        private val RADII = listOf(50, 100, 200, 500)
+        private val RADII = listOf(50, 100, 125, 150, 200, 300)
         private val PROFILES = listOf(
             Triple(Settings.PROFILE_AUTO, R.string.profile_auto, R.string.profile_auto_help),
             Triple(Settings.PROFILE_HIGH, R.string.profile_high, R.string.profile_high_help),

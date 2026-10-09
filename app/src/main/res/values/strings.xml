@@ -100,7 +100,7 @@
     <string name="bt_no_paired">No paired devices found. Turn on Bluetooth and pair your car first.</string>
     <string name="bt_permission_needed">Allow Nearby devices to use the Bluetooth trigger</string>
     <string name="quiet_zones">Quiet zones</string>
-    <string name="quiet_zones_help">Inside a quiet zone (home, office…) points aren’t sent unless you’re on a trip, so walking around inside sends nothing. Location keeps running as usual, so trips still start on time.</string>
+    <string name="quiet_zones_help">Inside a quiet zone (home, office…) points aren’t sent unless you’re on a trip, so walking around inside sends nothing. Location stays in low power inside and switches to GPS as soon as you’re in a vehicle or leave the zone.</string>
     <string name="add_zone">Add zone here</string>
     <string name="zone_locating">Getting your location…</string>
     <string name="zone_no_location">Couldn’t get your location. Try again near a window.</string>
