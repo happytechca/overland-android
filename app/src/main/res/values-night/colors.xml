@@ -1,0 +1,42 @@
+<resources>
+    <color name="m3_primary">#FF9466</color>
+    <color name="m3_on_primary">#1F0A00</color>
+    <color name="m3_primary_container">#5E2711</color>
+    <color name="m3_on_primary_container">#FFDBCD</color>
+    <color name="m3_secondary">#E7BDB1</color>
+    <color name="m3_on_secondary">#442A22</color>
+    <color name="m3_secondary_container">#5C4037</color>
+    <color name="m3_on_secondary_container">#FFDBCD</color>
+    <color name="m3_tertiary">#D7C68D</color>
+    <color name="m3_on_tertiary">#3A3005</color>
+    <color name="m3_tertiary_container">#52461A</color>
+    <color name="m3_on_tertiary_container">#F4E2A7</color>
+    <color name="m3_error">#FFB4AB</color>
+    <color name="m3_on_error">#690005</color>
+    <color name="m3_error_container">#8C1D18</color>
+    <color name="m3_on_error_container">#FFDAD6</color>
+    <color name="m3_background">#19120F</color>
+    <color name="m3_on_background">#F0DFD9</color>
+    <color name="m3_surface">#19120F</color>
+    <color name="m3_on_surface">#F0DFD9</color>
+    <color name="m3_on_surface_variant">#D8C2BA</color>
+    <color name="m3_surface_variant">#52443E</color>
+    <color name="m3_surface_container_lowest">#130D0A</color>
+    <color name="m3_surface_container_low">#211915</color>
+    <color name="m3_surface_container">#241C18</color>
+    <color name="m3_surface_container_high">#2F2622</color>
+    <color name="m3_surface_container_highest">#3A302C</color>
+    <color name="m3_outline">#A08C85</color>
+    <color name="m3_outline_variant">#52443E</color>
+    <color name="m3_inverse_surface">#F0DFD9</color>
+    <color name="m3_inverse_on_surface">#382E2A</color>
+    <color name="m3_inverse_primary">#A33F12</color>
+
+    <color name="ok">#86D993</color>
+    <color name="ok_container">#1E3B24</color>
+    <color name="on_ok_container">#C8F2CE</color>
+    <color name="on_ok_container_variant">#A9D9B0</color>
+    <color name="on_error_container_variant">#F5C4BE</color>
+    <color name="warn">#F2C15B</color>
+    <color name="dot_off">#6F5F59</color>
+</resources>

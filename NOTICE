@@ -8,3 +8,6 @@ icon is redrawn after that project's icon.
 
 It sends data in the format of Overland for iOS by Aaron Parecki
 (https://github.com/aaronpk/Overland-iOS, Apache License 2.0).
+
+The in-app icons are Material Symbols by Google
+(https://github.com/google/material-design-icons, Apache License 2.0).

@@ -20,26 +20,27 @@ object Uploader {
         val settings = Settings(context)
         val queue = PointQueue.get(context)
 
+        val batchSize = settings.batchSize.coerceAtLeast(1)
         var sent = 0
         var first = true
         while (true) {
-            val batch = queue.oldest(Settings.BATCH_SIZE)
+            val batch = queue.oldest(batchSize)
             if (batch.isEmpty() && !first) break
             first = false
 
             val error = post(settings, OverlandPayload.batch(batch.map { it.second }))
             if (error != null) {
                 val result = if (sent > 0) "Sent $sent points, then failed: $error" else "Failed: $error"
-                record(settings, result)
+                record(settings, result, ok = false)
                 return result
             }
             queue.delete(batch.map { it.first })
             sent += batch.size
-            if (batch.size < Settings.BATCH_SIZE) break
+            if (batch.size < batchSize) break
         }
 
         val result = if (sent > 0) "OK, sent $sent points" else "OK (connection test, nothing to send)"
-        record(settings, result)
+        record(settings, result, ok = true)
         return result
     }
 
@@ -80,8 +81,9 @@ object Uploader {
         }
     }
 
-    private fun record(settings: Settings, result: String) {
+    private fun record(settings: Settings, result: String, ok: Boolean) {
         settings.lastUploadAt = System.currentTimeMillis()
         settings.lastUploadResult = result
+        settings.lastUploadOk = ok
     }
 }

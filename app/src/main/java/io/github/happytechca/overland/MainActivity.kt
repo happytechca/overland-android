@@ -1,28 +1,24 @@
 package io.github.happytechca.overland
 
 import android.Manifest
-import android.annotation.SuppressLint
 import android.content.Intent
 import android.content.pm.PackageManager
-import android.net.Uri
+import android.content.res.ColorStateList
 import android.os.Build
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
-import android.os.PowerManager
-import android.provider.Settings as AndroidSettings
-import android.text.format.DateUtils
-import android.widget.Toast
+import android.text.format.DateFormat
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
-import androidx.core.view.ViewCompat
-import androidx.core.view.WindowInsetsCompat
-import androidx.core.view.updatePadding
+import androidx.core.view.isVisible
 import io.github.happytechca.overland.databinding.ActivityMainBinding
+import com.google.android.material.R as MaterialR
 import com.google.android.material.dialog.MaterialAlertDialogBuilder
 import java.util.Locale
 
+/** Home: live status only. Server settings are in [SettingsActivity], permission checks in [DiagnosticsActivity]. */
 class MainActivity : AppCompatActivity() {
 
     private lateinit var binding: ActivityMainBinding
@@ -31,13 +27,14 @@ class MainActivity : AppCompatActivity() {
     private val refreshLoop = object : Runnable {
         override fun run() {
             refresh()
-            handler.postDelayed(this, 2000)
+            handler.postDelayed(this, 1000) // the trip timer ticks every second
         }
     }
 
     /** Permissions already asked during the current "Start tracking" flow, so a denial isn't asked again. */
     private val asked = mutableSetOf<String>()
     private var starting = false
+    private var sending = false
     private val permissionLauncher =
         registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { continueStart() }
 
@@ -45,41 +42,24 @@ class MainActivity : AppCompatActivity() {
         super.onCreate(savedInstanceState)
         binding = ActivityMainBinding.inflate(layoutInflater)
         setContentView(binding.root)
+        edgeToEdge(binding.root)
         settings = Settings(this)
 
-        // Edge-to-edge (enforced from Android 15): keep content clear of the status and navigation bars
-        ViewCompat.setOnApplyWindowInsetsListener(binding.root) { v, insets ->
-            val bars = insets.getInsets(WindowInsetsCompat.Type.systemBars() or WindowInsetsCompat.Type.ime())
-            v.updatePadding(top = bars.top, bottom = bars.bottom)
-            insets
-        }
-
-        binding.url.setText(settings.url)
-        binding.token.setText(settings.token)
-        binding.deviceId.setText(settings.deviceId)
-        binding.interval.setText(settings.uploadIntervalSec.toString())
-
+        binding.settings.setOnClickListener { startActivity(Intent(this, SettingsActivity::class.java)) }
+        binding.health.setOnClickListener { startActivity(Intent(this, DiagnosticsActivity::class.java)) }
         binding.toggle.setOnClickListener {
             if (TrackingService.running) {
                 settings.trackingEnabled = false
                 TrackingService.stop(this)
+                binding.root.snack(getString(R.string.tracking_stopped))
                 handler.postDelayed(::refresh, 300)
             } else {
-                saveSettings()
                 starting = true
                 asked.clear()
                 continueStart()
             }
         }
         binding.upload.setOnClickListener { uploadNow() }
-        binding.save.setOnClickListener {
-            saveSettings()
-            Toast.makeText(this, R.string.saved, Toast.LENGTH_SHORT).show()
-        }
-        binding.appSettings.setOnClickListener {
-            startActivity(Intent(AndroidSettings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.fromParts("package", packageName, null)))
-        }
-        binding.battery.setOnClickListener { requestBatteryExemption() }
     }
 
     override fun onResume() {
@@ -92,15 +72,6 @@ class MainActivity : AppCompatActivity() {
         super.onPause()
     }
 
-    private fun saveSettings() {
-        settings.url = binding.url.text.toString().trim()
-        settings.token = binding.token.text.toString().trim()
-        settings.deviceId = binding.deviceId.text.toString().trim()
-        val interval = binding.interval.text.toString().toIntOrNull()?.coerceIn(15, 3600) ?: 60
-        settings.uploadIntervalSec = interval
-        binding.interval.setText(interval.toString())
-    }
-
     /** Asks for each missing permission in turn, then starts the service. */
     private fun continueStart() {
         if (!starting) return
@@ -108,7 +79,7 @@ class MainActivity : AppCompatActivity() {
         if (!has(Manifest.permission.ACCESS_FINE_LOCATION)) {
             if (Manifest.permission.ACCESS_FINE_LOCATION in asked) {
                 starting = false
-                Toast.makeText(this, R.string.location_required, Toast.LENGTH_LONG).show()
+                binding.root.snack(getString(R.string.location_required))
                 return
             }
             ask(Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION)
@@ -137,6 +108,7 @@ class MainActivity : AppCompatActivity() {
         starting = false
         settings.trackingEnabled = true
         TrackingService.start(this)
+        binding.root.snack(getString(R.string.tracking_started))
         handler.postDelayed(::refresh, 300)
     }
 
@@ -151,66 +123,114 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun uploadNow() {
-        saveSettings()
-        binding.upload.isEnabled = false
-        binding.upload.setText(R.string.uploading)
+        if (sending) return
+        sending = true
+        refresh()
         Thread {
             val result = Uploader.uploadAll(applicationContext)
             runOnUiThread {
-                binding.upload.isEnabled = true
-                binding.upload.setText(R.string.upload_now)
-                Toast.makeText(this, result, Toast.LENGTH_LONG).show()
+                sending = false
+                binding.root.snack(result)
                 refresh()
             }
         }.start()
     }
 
-    @SuppressLint("BatteryLife")
-    private fun requestBatteryExemption() {
-        val pm = getSystemService(PowerManager::class.java)
-        val intent = if (pm.isIgnoringBatteryOptimizations(packageName)) {
-            Intent(AndroidSettings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS)
-        } else {
-            Intent(AndroidSettings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS, Uri.parse("package:$packageName"))
-        }
-        startActivity(intent)
-    }
-
     private fun refresh() {
         val running = TrackingService.running
-        binding.status.setText(if (running) R.string.tracking_on else R.string.tracking_off)
-        binding.toggle.setText(if (running) R.string.stop_tracking else R.string.start_tracking)
+        val root = binding.root
 
-        binding.details.text = buildString {
-            append("Last location: ")
-            append(if (settings.lastLocationAt > 0) "${ago(settings.lastLocationAt)}\n${settings.lastLocationText}" else "none yet")
-            append("\nMotion: ${Motion.current ?: "unknown"}")
-            val trip = TrackingService.currentTrip?.takeIf { it.active }
-            append("\nTrip: ")
-            append(trip?.let {
-                String.format(Locale.getDefault(), "in progress, %.1f km since %s", it.distanceM / 1000,
-                    android.text.format.DateFormat.getTimeFormat(this@MainActivity).format(it.startMs))
-            } ?: "none")
-            append("\nQueued points: ${PointQueue.get(this@MainActivity).count()}")
-            append("\nLast upload: ")
-            append(if (settings.lastUploadAt > 0) "${ago(settings.lastUploadAt)} — ${settings.lastUploadResult}" else "never")
+        // Health banner
+        val failing = Health.failing(this)
+        if (failing.isEmpty()) {
+            val fg = getColor(R.color.on_ok_container)
+            binding.health.setCardBackgroundColor(getColor(R.color.ok_container))
+            binding.healthIcon.setImageResource(R.drawable.ic_verified_user)
+            binding.healthIcon.imageTintList = ColorStateList.valueOf(getColor(R.color.ok))
+            binding.healthTitle.setText(R.string.ready_to_track)
+            binding.healthTitle.setTextColor(fg)
+            binding.healthText.setText(R.string.all_checks_passed)
+            binding.healthText.setTextColor(getColor(R.color.on_ok_container_variant))
+            binding.healthChevron.imageTintList = ColorStateList.valueOf(fg)
+        } else {
+            val fg = root.themeColor(MaterialR.attr.colorOnErrorContainer)
+            binding.health.setCardBackgroundColor(root.themeColor(MaterialR.attr.colorErrorContainer))
+            binding.healthIcon.setImageResource(R.drawable.ic_error)
+            binding.healthIcon.imageTintList = ColorStateList.valueOf(root.themeColor(MaterialR.attr.colorError))
+            binding.healthTitle.text = Health.issuesTitle(this, failing.size)
+            binding.healthTitle.setTextColor(fg)
+            binding.healthText.text = failing.joinToString(" · ") { getString(it.title) }
+            binding.healthText.setTextColor(getColor(R.color.on_error_container_variant))
+            binding.healthChevron.imageTintList = ColorStateList.valueOf(fg)
         }
 
-        binding.checks.text = buildString {
-            append(check("Location", has(Manifest.permission.ACCESS_FINE_LOCATION)))
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                append(check("Location all the time", has(Manifest.permission.ACCESS_BACKGROUND_LOCATION)))
-                append(check("Physical activity", has(Manifest.permission.ACTIVITY_RECOGNITION)))
-            }
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                append(check("Notifications", has(Manifest.permission.POST_NOTIFICATIONS)))
-            }
-            append(check("Battery unrestricted", getSystemService(PowerManager::class.java).isIgnoringBatteryOptimizations(packageName)))
-        }.trimEnd()
+        // Status card
+        val high = TrackingService.highAccuracy ?: (settings.accuracyProfile != Settings.PROFILE_LOW)
+        binding.statusDot.imageTintList = ColorStateList.valueOf(getColor(if (running) R.color.ok else R.color.dot_off))
+        binding.status.setText(if (running) R.string.tracking_on else R.string.tracking_off)
+        binding.mode.text = if (running) getString(if (high) R.string.mode_high else R.string.mode_low) else ""
+
+        val motion = MotionUi.of(Motion.current ?: settings.lastMotion)
+        binding.motionIcon.setImageResource(motion.icon)
+        binding.motion.setText(motion.label)
+        binding.motionSub.setText(
+            when {
+                !running -> R.string.motion_sub_off
+                high -> R.string.motion_sub_high
+                else -> R.string.motion_sub_low
+            },
+        )
+
+        val trip = TrackingService.currentTrip?.takeIf { it.active }
+        binding.trip.isVisible = trip != null
+        binding.noTrip.isVisible = trip == null
+        if (trip != null) {
+            binding.tripSince.text = getString(R.string.trip_since, DateFormat.getTimeFormat(this).format(trip.startMs))
+            binding.tripElapsed.text = clock(System.currentTimeMillis() - trip.startMs)
+            binding.tripKm.text = getString(R.string.trip_km, String.format(Locale.getDefault(), "%.1f", trip.distanceM / 1000))
+        }
+
+        // Start / stop
+        val (bg, fg) = if (running) {
+            root.themeColor(MaterialR.attr.colorSecondaryContainer) to root.themeColor(MaterialR.attr.colorOnSecondaryContainer)
+        } else {
+            getColor(R.color.brand) to getColor(R.color.on_brand)
+        }
+        binding.toggle.setText(if (running) R.string.stop_tracking else R.string.start_tracking)
+        binding.toggle.setIconResource(if (running) R.drawable.ic_stop else R.drawable.ic_play_arrow)
+        binding.toggle.backgroundTintList = ColorStateList.valueOf(bg)
+        binding.toggle.setTextColor(fg)
+        binding.toggle.iconTint = ColorStateList.valueOf(fg)
+
+        // Activity
+        if (settings.lastLocationAt > 0) {
+            binding.fixTitle.text = getString(R.string.last_fix, ago(settings.lastLocationAt))
+            binding.fixText.text = settings.lastLocationText
+        } else {
+            binding.fixTitle.setText(R.string.last_fix_none)
+            binding.fixText.setText(R.string.last_fix_none_sub)
+        }
+
+        val (icon, tint) = when {
+            sending -> R.drawable.ic_cloud_sync to root.themeColor(MaterialR.attr.colorOnSurfaceVariant)
+            settings.lastUploadAt == 0L -> R.drawable.ic_cloud_upload to root.themeColor(MaterialR.attr.colorOnSurfaceVariant)
+            settings.lastUploadOk -> R.drawable.ic_cloud_done to getColor(R.color.ok)
+            else -> R.drawable.ic_cloud_off to root.themeColor(MaterialR.attr.colorError)
+        }
+        binding.uploadIcon.setImageResource(icon)
+        binding.uploadIcon.imageTintList = ColorStateList.valueOf(tint)
+        if (settings.lastUploadAt > 0) {
+            binding.uploadTitle.text = getString(R.string.last_upload, ago(settings.lastUploadAt))
+            binding.uploadText.text = settings.lastUploadResult
+        } else {
+            binding.uploadTitle.setText(R.string.last_upload_none)
+            binding.uploadText.setText(R.string.last_upload_none_sub)
+        }
+
+        val queued = PointQueue.get(this).count().toInt()
+        binding.queueText.text =
+            if (queued == 0) getString(R.string.queue_empty) else resources.getQuantityString(R.plurals.queue_waiting, queued, queued)
+        binding.upload.setText(if (sending) R.string.sending else R.string.send_now)
+        binding.upload.isEnabled = !sending
     }
-
-    private fun check(label: String, ok: Boolean) = "${if (ok) "✓" else "✗"}  $label\n"
-
-    private fun ago(time: Long) =
-        DateUtils.getRelativeTimeSpanString(time, System.currentTimeMillis(), DateUtils.SECOND_IN_MILLIS)
 }

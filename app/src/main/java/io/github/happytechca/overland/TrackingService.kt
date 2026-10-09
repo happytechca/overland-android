@@ -10,6 +10,7 @@ import android.app.Service
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
+import android.content.SharedPreferences
 import android.content.pm.PackageManager
 import android.content.pm.ServiceInfo
 import android.location.Location
@@ -32,14 +33,16 @@ import com.google.android.gms.location.LocationServices
 import com.google.android.gms.location.Priority
 import java.util.Locale
 import java.util.concurrent.Executors
+import java.util.concurrent.ScheduledFuture
 import java.util.concurrent.TimeUnit
 
 /**
  * Foreground service that records locations into [PointQueue] and uploads them periodically.
  *
- * GPS runs at high accuracy while moving and drops to a low-power request when activity recognition
- * reports the phone as still (like Overland iOS pausing). A fix far from where the phone went still
- * switches back to high accuracy in case activity recognition is slow to notice.
+ * With the adaptive profile, GPS runs at high accuracy while moving and drops to a low-power request when
+ * activity recognition reports the phone as still (like Overland iOS pausing). A fix far from where the phone
+ * went still switches back to high accuracy in case activity recognition is slow to notice. The other profiles
+ * stay at high accuracy or low power.
  *
  * The foreground notification is minimized while idle and becomes "Trip in progress" (timer + distance)
  * while [TripTracker] thinks the phone is on a trip.
@@ -50,6 +53,7 @@ class TrackingService : Service() {
     private lateinit var queue: PointQueue
     private lateinit var fused: FusedLocationProviderClient
     private val worker = Executors.newSingleThreadScheduledExecutor()
+    private var uploadTask: ScheduledFuture<*>? = null
     private val handler = Handler(Looper.getMainLooper())
 
     /** Main thread only */
@@ -78,6 +82,15 @@ class TrackingService : Service() {
     private val locationCallback = object : LocationCallback() {
         override fun onLocationResult(result: LocationResult) {
             result.locations.forEach(::onLocation)
+        }
+    }
+
+    /** Settings changed from the Settings screen while running (main thread) */
+    private val settingsListener = SharedPreferences.OnSharedPreferenceChangeListener { _, key ->
+        when (key) {
+            Settings.KEY_PROFILE -> applyLocationRequest()
+            Settings.KEY_UPLOAD_INTERVAL -> scheduleUpload()
+            Settings.KEY_TRIP_NOTIFICATION -> updateNotification()
         }
     }
 
@@ -115,8 +128,8 @@ class TrackingService : Service() {
             Motion.listener = { applyLocationRequest() }
             applyLocationRequest()
             startActivityUpdates()
-            val interval = settings.uploadIntervalSec.coerceAtLeast(15).toLong()
-            worker.scheduleWithFixedDelay(::upload, interval, interval, TimeUnit.SECONDS)
+            scheduleUpload()
+            settings.registerListener(settingsListener)
         }
         if (intent?.action == ACTION_UPLOAD) worker.execute(::upload)
 
@@ -127,6 +140,8 @@ class TrackingService : Service() {
     override fun onDestroy() {
         running = false
         currentTrip = null
+        highAccuracy = null
+        settings.unregisterListener(settingsListener)
         handler.removeCallbacks(tripCheck)
         Motion.listener = null
         fused.removeLocationUpdates(locationCallback)
@@ -138,13 +153,25 @@ class TrackingService : Service() {
         super.onDestroy()
     }
 
-    /** (Re)requests locations with the profile matching the current motion. */
+    /** Uploads every upload interval, rescheduled when the interval changes. */
+    private fun scheduleUpload() {
+        uploadTask?.cancel(false)
+        val interval = settings.uploadIntervalSec.coerceAtLeast(15).toLong()
+        uploadTask = worker.scheduleWithFixedDelay(::upload, interval, interval, TimeUnit.SECONDS)
+    }
+
+    /** (Re)requests locations with the accuracy matching the profile and current motion. */
     @SuppressLint("MissingPermission")
     private fun applyLocationRequest() {
         if (Motion.current != "stationary") movedWhileStill = false
-        val wantLowPower = Motion.current == "stationary" && !movedWhileStill
+        val wantLowPower = when (settings.accuracyProfile) {
+            Settings.PROFILE_HIGH -> false
+            Settings.PROFILE_LOW -> true
+            else -> Motion.current == "stationary" && !movedWhileStill
+        }
         if (wantLowPower == lowPower) return
         lowPower = wantLowPower
+        highAccuracy = !wantLowPower
         stillAnchor = if (wantLowPower) lastLocation else null
 
         val request = if (wantLowPower) {
@@ -178,7 +205,8 @@ class TrackingService : Service() {
         lastLocation = location
 
         val anchor = stillAnchor
-        if (lowPower == true && anchor != null && location.accuracy < 100 && location.distanceTo(anchor) > 200) {
+        val adaptive = settings.accuracyProfile == Settings.PROFILE_AUTO
+        if (adaptive && lowPower == true && anchor != null && location.accuracy < 100 && location.distanceTo(anchor) > 200) {
             movedWhileStill = true
             applyLocationRequest()
         } else if (lowPower == true && anchor == null) {
@@ -203,6 +231,7 @@ class TrackingService : Service() {
         if (trip.onPoint(point)) updateNotification()
 
         settings.lastLocationAt = location.time
+        if (Motion.current != null) settings.lastMotion = Motion.current
         settings.lastLocationText = String.format(
             Locale.US, "%.5f, %.5f ±%.0f m%s", location.latitude, location.longitude, location.accuracy,
             if (location.hasSpeed()) String.format(Locale.US, ", %.0f km/h", location.speed * 3.6) else "",
@@ -210,7 +239,7 @@ class TrackingService : Service() {
 
         worker.execute {
             queue.add(feature)
-            if (queue.count() >= Settings.BATCH_SIZE) upload()
+            if (queue.count() >= settings.batchSize) upload()
         }
     }
 
@@ -252,7 +281,7 @@ class TrackingService : Service() {
         val open = PendingIntent.getActivity(
             this, 0, Intent(this, MainActivity::class.java), PendingIntent.FLAG_IMMUTABLE,
         )
-        val builder = if (trip.active) {
+        val builder = if (trip.active && settings.tripNotification) {
             NotificationCompat.Builder(this, CHANNEL_TRIP)
                 .setContentTitle(getString(R.string.trip_in_progress))
                 .setContentText(getString(
@@ -297,6 +326,10 @@ class TrackingService : Service() {
         const val ACTION_UPLOAD = "io.github.happytechca.overland.UPLOAD"
 
         @Volatile var running = false
+            private set
+
+        /** Whether the current location request is high accuracy; null when not running. */
+        @Volatile var highAccuracy: Boolean? = null
             private set
 
         /** The running service's trip state, for the main screen (main thread only). */

@@ -1,3 +1,49 @@
 <resources>
+    <!-- Brand -->
     <color name="brand">#E2622A</color>
+    <color name="on_brand">#1F0A00</color>
+    <color name="brand_thumb">#FFF1EC</color>
+
+    <!-- Material 3 scheme derived from the brand color (light; dark is in values-night) -->
+    <color name="m3_primary">#A33F12</color>
+    <color name="m3_on_primary">#FFFFFF</color>
+    <color name="m3_primary_container">#FFDBCD</color>
+    <color name="m3_on_primary_container">#380D00</color>
+    <color name="m3_secondary">#77574D</color>
+    <color name="m3_on_secondary">#FFFFFF</color>
+    <color name="m3_secondary_container">#F6DDD3</color>
+    <color name="m3_on_secondary_container">#2C150E</color>
+    <color name="m3_tertiary">#6B5E2F</color>
+    <color name="m3_on_tertiary">#FFFFFF</color>
+    <color name="m3_tertiary_container">#F4E2A7</color>
+    <color name="m3_on_tertiary_container">#231B00</color>
+    <color name="m3_error">#BA1A1A</color>
+    <color name="m3_on_error">#FFFFFF</color>
+    <color name="m3_error_container">#FFDAD6</color>
+    <color name="m3_on_error_container">#410002</color>
+    <color name="m3_background">#FFF8F6</color>
+    <color name="m3_on_background">#231917</color>
+    <color name="m3_surface">#FFF8F6</color>
+    <color name="m3_on_surface">#231917</color>
+    <color name="m3_on_surface_variant">#53433E</color>
+    <color name="m3_surface_variant">#F5DED6</color>
+    <color name="m3_surface_container_lowest">#FFFFFF</color>
+    <color name="m3_surface_container_low">#FFF1ED</color>
+    <color name="m3_surface_container">#FCEAE4</color>
+    <color name="m3_surface_container_high">#F6E4DE</color>
+    <color name="m3_surface_container_highest">#F1DFD9</color>
+    <color name="m3_outline">#85736D</color>
+    <color name="m3_outline_variant">#D8C2BA</color>
+    <color name="m3_inverse_surface">#392E2B</color>
+    <color name="m3_inverse_on_surface">#FFEDE8</color>
+    <color name="m3_inverse_primary">#FFB59A</color>
+
+    <!-- Status colors -->
+    <color name="ok">#2E7D3E</color>
+    <color name="ok_container">#D4F0D8</color>
+    <color name="on_ok_container">#0F3A1A</color>
+    <color name="on_ok_container_variant">#2F5A37</color>
+    <color name="on_error_container_variant">#73332D</color>
+    <color name="warn">#8A6100</color>
+    <color name="dot_off">#B5A39C</color>
 </resources>
