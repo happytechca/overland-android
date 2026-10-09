@@ -14,6 +14,9 @@ import android.content.SharedPreferences
 import android.content.pm.PackageManager
 import android.content.pm.ServiceInfo
 import android.location.Location
+import android.net.ConnectivityManager
+import android.net.Network
+import android.net.NetworkCapabilities
 import android.os.BatteryManager
 import android.os.Build
 import android.os.Handler
@@ -33,6 +36,7 @@ import com.google.android.gms.location.LocationServices
 import com.google.android.gms.location.Priority
 import java.util.Locale
 import java.util.concurrent.Executors
+import java.util.concurrent.RejectedExecutionException
 import java.util.concurrent.ScheduledFuture
 import java.util.concurrent.TimeUnit
 
@@ -46,6 +50,8 @@ import java.util.concurrent.TimeUnit
  * received at no cost; a fast one switches back to high accuracy.
  *
  * With the Bluetooth trigger, a chosen device being connected (e.g. the car) forces high accuracy.
+ * Failed uploads back off exponentially; nothing is tried without a network, and a network coming back
+ * retries right away.
  * Inside a quiet zone, points are held back unless the phone is on a trip; the last one held is sent first
  * when recording resumes, so a trip starts where the phone was parked.
  *
@@ -59,6 +65,8 @@ class TrackingService : Service() {
     private lateinit var fused: FusedLocationProviderClient
     private val worker = Executors.newSingleThreadScheduledExecutor()
     private var uploadTask: ScheduledFuture<*>? = null
+    /** Worker thread only */
+    private val backoff = Backoff()
     private val handler = Handler(Looper.getMainLooper())
 
     /** Main thread only */
@@ -86,6 +94,19 @@ class TrackingService : Service() {
             this, 0, Intent(this, ActivityReceiver::class.java),
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_MUTABLE,
         )
+    }
+
+    private val networkCallback = object : ConnectivityManager.NetworkCallback() {
+        override fun onAvailable(network: Network) {
+            try {
+                worker.execute {
+                    backoff.reset()
+                    upload()
+                }
+            } catch (e: RejectedExecutionException) {
+                // Service stopping
+            }
+        }
     }
 
     private val locationCallback = object : LocationCallback() {
@@ -156,16 +177,21 @@ class TrackingService : Service() {
             applyLocationRequest()
             startActivityUpdates()
             scheduleUpload()
+            getSystemService(ConnectivityManager::class.java).registerDefaultNetworkCallback(networkCallback)
             settings.registerListener(settingsListener)
         }
-        if (intent?.action == ACTION_UPLOAD) worker.execute(::upload)
+        if (intent?.action == ACTION_UPLOAD) worker.execute { upload(force = true) }
 
         return START_STICKY
     }
 
     @SuppressLint("MissingPermission") // checked by hasActivityPermission()
     override fun onDestroy() {
-        if (running) bluetooth.stop() // only started once running
+        if (running) {
+            // only started once running
+            bluetooth.stop()
+            getSystemService(ConnectivityManager::class.java).unregisterNetworkCallback(networkCallback)
+        }
         running = false
         currentTrip = null
         highAccuracy = null
@@ -179,7 +205,7 @@ class TrackingService : Service() {
         if (hasActivityPermission(this)) {
             ActivityRecognition.getClient(this).removeActivityUpdates(activityIntent)
         }
-        worker.execute(::upload) // flush what's left
+        worker.execute { upload(force = true) } // flush what's left
         worker.shutdown()
         super.onDestroy()
     }
@@ -292,15 +318,33 @@ class TrackingService : Service() {
         }
     }
 
-    /** Sends what's queued; no request at all when nothing was recorded (e.g. in a quiet zone). */
-    private fun upload() {
-        if (queue.count() == 0L) return
+    /**
+     * Sends what's queued (worker thread). No request at all when nothing was recorded (e.g. in a quiet zone),
+     * without a network, or while backing off after a failure unless [force]d.
+     */
+    private fun upload(force: Boolean = false) {
+        if (queue.count() == 0L || !online()) return
+        val now = System.currentTimeMillis()
+        if (settings.lastUploadOk) backoff.reset() // e.g. "Send now" worked since the last failure
+        if (!force && !backoff.ready(now)) return
         try {
             Uploader.uploadAll(this)
-            handler.post(::updateNotification)
         } catch (e: Exception) {
             Log.e(TAG, "Upload failed", e)
         }
+        if (settings.lastUploadOk) {
+            backoff.reset()
+        } else {
+            backoff.onFailure(now)
+            Log.i(TAG, "Upload failed, next try in ${(backoff.retryAtMs - now) / 1000} s")
+        }
+        handler.post(::updateNotification)
+    }
+
+    private fun online(): Boolean {
+        val connectivity = getSystemService(ConnectivityManager::class.java)
+        val capabilities = connectivity.getNetworkCapabilities(connectivity.activeNetwork) ?: return false
+        return capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
     }
 
     private fun battery(): Pair<Float?, String> {

@@ -20,12 +20,14 @@ paid dependencies and targets current Android versions (Android 8.0 and newer).
   for free, and a fast one switches straight back to GPS.
 - **Bluetooth trigger** (optional): high-accuracy GPS while a chosen paired device, such as your car, is
   connected, so trips are recorded from the first metre instead of when motion detection catches up.
+  It stays on for 2 minutes after the device disconnects, so the parking spot is recorded accurately.
 - **Quiet zones** (optional): inside a zone you set (home, office…), points aren't sent unless you're on
   a trip, so walking around inside sends nothing. Location keeps running as usual, so trip starts aren't
   delayed, and the last point held back is sent first so a trip starts where you were parked.
 - `motion` (`driving`, `cycling`, `walking`, `running`, `stationary`) on every point.
 - Offline queue: points are stored on the phone and uploaded in batches; nothing is lost without
-  a connection.
+  a connection. Nothing is tried while offline, failed uploads are retried after 1, 2, 4, 8 then every
+  15 minutes, and a connection coming back retries right away.
 - "Trip in progress" notification with a live timer and distance while you're driving; a minimized,
   silent notification the rest of the time.
 - Diagnostics screen that checks permissions, battery optimization and manufacturer limits, with a

@@ -11,21 +11,28 @@ import android.content.Intent
 import android.content.IntentFilter
 import android.content.pm.PackageManager
 import android.os.Build
+import android.os.Handler
+import android.os.Looper
 import android.util.Log
 import androidx.core.content.ContextCompat
 import androidx.core.content.IntentCompat
 
 /**
  * Tells [TrackingService] when one of the devices chosen for the Bluetooth trigger (e.g. the car) is connected.
- * Listens to connection broadcasts, so it costs nothing while waiting. Main thread only.
+ * Listens to connection broadcasts, so it costs nothing while waiting. A device still counts as connected for
+ * [GRACE_MS] after it disconnects, so the parking spot is recorded accurately and a brief drop mid-drive
+ * doesn't switch to low power. Main thread only.
  */
 class BluetoothTrigger(
     private val context: Context,
     private val settings: Settings,
     private val onChange: () -> Unit,
 ) {
-    /** Chosen devices connected right now, by address */
+    /** Chosen devices connected right now or within [GRACE_MS], by address */
     private val connected = linkedMapOf<String, String>()
+    /** Pending removals of disconnected devices, by address */
+    private val disconnecting = mutableMapOf<String, Runnable>()
+    private val handler = Handler(Looper.getMainLooper())
 
     val active get() = connected.isNotEmpty()
 
@@ -35,15 +42,26 @@ class BluetoothTrigger(
     private val receiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context, intent: Intent) {
             val device = IntentCompat.getParcelableExtra(intent, BluetoothDevice.EXTRA_DEVICE, BluetoothDevice::class.java) ?: return
-            val chosen = chosen()[device.address] ?: return
-            val changed = when (intent.action) {
-                BluetoothDevice.ACTION_ACL_CONNECTED -> connected.put(device.address, chosen) == null
-                BluetoothDevice.ACTION_ACL_DISCONNECTED -> connected.remove(device.address) != null
-                else -> false
-            }
-            if (changed) {
-                Log.i(TAG, "$chosen ${if (device.address in connected) "connected" else "disconnected"}")
-                onChange()
+            val address = device.address
+            val chosen = chosen()[address] ?: return
+            when (intent.action) {
+                BluetoothDevice.ACTION_ACL_CONNECTED -> {
+                    disconnecting.remove(address)?.let(handler::removeCallbacks)
+                    if (connected.put(address, chosen) == null) {
+                        Log.i(TAG, "$chosen connected")
+                        onChange()
+                    }
+                }
+                BluetoothDevice.ACTION_ACL_DISCONNECTED -> {
+                    if (address !in connected || address in disconnecting) return
+                    Log.i(TAG, "$chosen disconnected, still active for ${GRACE_MS / 1000} s")
+                    val remove = Runnable {
+                        disconnecting.remove(address)
+                        if (connected.remove(address) != null) onChange()
+                    }
+                    disconnecting[address] = remove
+                    handler.postDelayed(remove, GRACE_MS)
+                }
             }
         }
     }
@@ -60,6 +78,8 @@ class BluetoothTrigger(
 
     fun stop() {
         context.unregisterReceiver(receiver)
+        disconnecting.values.forEach(handler::removeCallbacks)
+        disconnecting.clear()
         connected.clear()
     }
 
@@ -72,6 +92,7 @@ class BluetoothTrigger(
         val chosen = chosen()
         val before = connected.keys.toSet()
         connected.keys.retainAll(chosen.keys)
+        disconnecting.keys.filter { it !in chosen }.forEach { handler.removeCallbacks(disconnecting.remove(it)!!) }
         if (connected.keys != before) onChange()
         if (chosen.isEmpty() || !hasPermission(context)) return
 
@@ -107,6 +128,7 @@ class BluetoothTrigger(
 
     companion object {
         private const val TAG = "BluetoothTrigger"
+        private const val GRACE_MS = 2 * 60_000L
 
         /** Android 12+ needs "Nearby devices" to see connections and paired devices; older versions grant it at install. */
         fun hasPermission(context: Context) =

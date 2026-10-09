@@ -87,3 +87,25 @@ object Uploader {
         settings.lastUploadOk = ok
     }
 }
+
+/**
+ * Exponential backoff for automatic uploads: after a failure, waits [baseMs], then twice as long after each
+ * further failure, up to [maxMs]. A success resets it.
+ */
+class Backoff(private val baseMs: Long = 60_000, private val maxMs: Long = 15 * 60_000) {
+    private var failures = 0
+    var retryAtMs = 0L
+        private set
+
+    fun ready(nowMs: Long) = nowMs >= retryAtMs
+
+    fun onFailure(nowMs: Long) {
+        failures++
+        retryAtMs = nowMs + minOf(baseMs shl minOf(failures - 1, 20), maxMs)
+    }
+
+    fun reset() {
+        failures = 0
+        retryAtMs = 0
+    }
+}
